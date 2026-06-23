@@ -5729,6 +5729,9 @@ function ensureLoginExtras(){
   if(!$("eloRequestAccessBtn")){
     links.insertAdjacentHTML("beforeend", '<button class="elo-auth-secondary" id="eloRequestAccessBtn" type="button">Solicitar cadastro</button>');
   }
+  if(!$("eloForgotPasswordBtn")){
+    links.insertAdjacentHTML("beforeend", '');
+  }
 
   const requestBtn = $("eloRequestAccessBtn");
   if(requestBtn && !requestBtn.dataset.firebaseRequestBound){
@@ -6193,7 +6196,6 @@ function initFirebaseUiBindings(){
     sessionStorage.removeItem("eloAuthenticatedTabV2843");
     sessionStorage.removeItem("eloAuthenticatedTabV2844");
     localStorage.removeItem("eloSessionActiveV2840");
-    localStorage.removeItem("eloLoginKeepConnected");
   }catch(e){}
   ensureLoginExtras();
   bindAdminFirebase();
@@ -6289,4 +6291,146 @@ onAuthStateChanged(auth, async (user) => {
   });
 })();
 </script>
+
+
+<script>
+/* v28.60 - Correções finais Login: layout, lembrar usuário e timeout de inatividade */
+(function(){
+  var INACTIVITY_LIMIT_MS = 10 * 60 * 1000;
+  var inactivityTimer = null;
+  var countdownTimer = null;
+  var lastActivity = Date.now();
+  var STORAGE_EMAIL = 'eloLoginRememberedEmailV2860';
+  var STORAGE_KEEP = 'eloLoginKeepUserV2860';
+
+  function ready(fn){ if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn); else fn(); }
+  function $(id){ return document.getElementById(id); }
+
+  function removeEnvInfo(){
+    var info = $('eloLoginEnvInfo');
+    if(info) info.remove();
+    document.querySelectorAll('#eloLoginScreen div').forEach(function(el){
+      if((el.textContent || '').trim() === 'Acesso controlado por Firebase Authentication + Firestore. Solicite cadastro caso ainda não tenha usuário aprovado.') el.remove();
+    });
+  }
+
+  function patchLoginLayout(){
+    removeEnvInfo();
+    var screen = $('eloLoginScreen');
+    if(screen) screen.setAttribute('data-version','v28.60');
+    var keep = $('eloKeepLogged');
+    var user = $('eloLoginUser');
+    var pass = $('eloLoginPass');
+    var forgot = document.querySelector('.elo-forgot');
+    if(user){
+      user.placeholder = 'Digite seu e-mail';
+      try{
+        if(localStorage.getItem(STORAGE_KEEP) === 'true') user.value = localStorage.getItem(STORAGE_EMAIL) || user.value || '';
+      }catch(e){}
+    }
+    if(pass) pass.placeholder = 'Digite sua senha';
+    if(keep){
+      try{ keep.checked = localStorage.getItem(STORAGE_KEEP) === 'true'; }catch(e){}
+      if(!keep.dataset.eloRememberBoundV2860){
+        keep.dataset.eloRememberBoundV2860 = '1';
+        keep.addEventListener('change', function(){
+          try{
+            if(keep.checked){
+              localStorage.setItem(STORAGE_KEEP, 'true');
+              localStorage.setItem(STORAGE_EMAIL, (user && user.value || '').trim());
+            }else{
+              localStorage.removeItem(STORAGE_KEEP);
+              localStorage.removeItem(STORAGE_EMAIL);
+            }
+          }catch(e){}
+        });
+      }
+    }
+    if(user && !user.dataset.eloRememberInputBoundV2860){
+      user.dataset.eloRememberInputBoundV2860 = '1';
+      user.addEventListener('input', function(){
+        try{ if($('eloKeepLogged') && $('eloKeepLogged').checked) localStorage.setItem(STORAGE_EMAIL, user.value.trim()); }catch(e){}
+      });
+    }
+    if(forgot){
+      forgot.textContent = 'ESQUECEU A SENHA?';
+      forgot.title = 'Enviar link de redefinição para o e-mail cadastrado';
+    }
+    if(!$('eloInactivityNotice')){
+      var card = document.querySelector('.elo-login-card-premium');
+      if(card){
+        var note = document.createElement('div');
+        note.id = 'eloInactivityNotice';
+        note.className = 'elo-inactivity-notice';
+        note.innerHTML = '<span>⏱️</span><strong>Sessão expira por inatividade em: <b id="eloInactivityCountdown">10:00</b></strong>';
+        card.appendChild(note);
+      }
+    }
+  }
+
+  function isUnlocked(){ return document.body.classList.contains('login-unlocked'); }
+  function formatRemaining(ms){
+    var total = Math.max(0, Math.ceil(ms / 1000));
+    var m = Math.floor(total / 60);
+    var s = total % 60;
+    return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+  }
+  function updateCountdown(){
+    var el = $('eloInactivityCountdown');
+    if(!el) return;
+    var remaining = INACTIVITY_LIMIT_MS - (Date.now() - lastActivity);
+    el.textContent = formatRemaining(remaining);
+  }
+  function resetInactivity(){
+    lastActivity = Date.now();
+    updateCountdown();
+    if(inactivityTimer) clearTimeout(inactivityTimer);
+    inactivityTimer = setTimeout(function(){
+      if(isUnlocked()){
+        try{ if(typeof window.__eloLogout === 'function') window.__eloLogout(); }
+        catch(e){}
+        try{ if(typeof window.showToast === 'function') window.showToast('Sessão encerrada automaticamente após 10 minutos de inatividade.'); }
+        catch(e){}
+      }
+    }, INACTIVITY_LIMIT_MS);
+  }
+  function bindInactivity(){
+    ['mousemove','mousedown','keydown','touchstart','scroll','click'].forEach(function(evt){
+      document.addEventListener(evt, function(){ if(isUnlocked()) resetInactivity(); }, true);
+    });
+    if(countdownTimer) clearInterval(countdownTimer);
+    countdownTimer = setInterval(function(){ if(isUnlocked()) updateCountdown(); }, 1000);
+    resetInactivity();
+  }
+
+  ready(function(){
+    patchLoginLayout();
+    bindInactivity();
+    setTimeout(patchLoginLayout, 300);
+    setTimeout(patchLoginLayout, 1000);
+  });
+})();
+</script>
+<style>
+/* v28.60 - Ajuste visual da tela de login */
+#eloLoginEnvInfo{display:none !important}
+body.login-locked{overflow:hidden !important}
+.elo-premium-login{padding:clamp(16px,2.1vw,30px) !important;overflow:hidden !important}
+.elo-login-frame{width:min(1500px,calc(100vw - 46px)) !important;height:min(840px,calc(100vh - 46px)) !important;min-height:620px !important;grid-template-columns:minmax(0,1.32fr) minmax(430px,.78fr) !important;border-radius:28px !important;overflow:hidden !important}
+.elo-login-side{padding:clamp(28px,3.2vw,50px) !important;overflow:hidden !important}
+.elo-login-card-premium{width:min(100%,430px) !important;margin:0 auto !important}
+.elo-login-logo-premium{width:min(255px,82%) !important;margin:0 auto 26px !important;padding:10px 18px !important}
+.elo-login-card-premium h2{font-size:clamp(28px,2.2vw,38px) !important;line-height:1.05 !important;margin-bottom:8px !important}
+.elo-login-card-premium .elo-login-sub{margin:0 0 26px !important;font-size:16px !important}
+.elo-field-group{margin-bottom:17px !important}
+.elo-input-wrap{min-height:58px !important;border-radius:14px !important}
+.elo-login-row{display:flex !important;align-items:center !important;justify-content:space-between !important;gap:14px !important;margin:8px 0 24px !important;flex-direction:row !important;flex-wrap:nowrap !important;width:100% !important}
+.elo-keep-logged{display:inline-flex !important;align-items:center !important;gap:9px !important;white-space:nowrap !important;color:#061d4f !important;font-weight:900 !important;font-size:14px !important;cursor:pointer !important}
+.elo-keep-logged input{appearance:auto !important;-webkit-appearance:checkbox !important;width:18px !important;height:18px !important;min-width:18px !important;display:inline-block !important;accent-color:#082f75 !important;opacity:1 !important;position:static !important;margin:0 !important}
+.elo-forgot{white-space:nowrap !important;font-size:12px !important;font-weight:950 !important;color:#0046b8 !important;max-width:190px !important;overflow:hidden !important;text-overflow:ellipsis !important;text-align:right !important;background:transparent !important;border:0 !important;cursor:pointer !important}
+.elo-login-submit{min-height:62px !important;margin-top:0 !important;border-radius:14px !important}
+.elo-auth-links-static,.elo-auth-links{margin-top:18px !important}.elo-auth-secondary{min-height:54px !important;border-radius:13px !important}
+.elo-inactivity-notice{margin:18px auto 0;display:flex;align-items:center;justify-content:center;gap:9px;width:min(100%,360px);padding:12px 14px;border-radius:16px;background:#dbeafe;color:#06337f;font-size:13px;font-weight:900;text-align:center}.elo-inactivity-notice b{font-size:14px}.elo-login-benefits{display:none !important}
+@media (max-width:980px){.elo-login-frame{grid-template-columns:1fr !important;height:auto !important;max-height:calc(100vh - 28px) !important;overflow:auto !important}.elo-login-hero{display:none !important}.elo-login-side{padding:28px 20px !important}.elo-login-row{flex-wrap:wrap !important}.elo-forgot{text-align:left !important;max-width:none !important}}
+</style>
 </body></html>
